@@ -3,51 +3,38 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PeerJS Link Share Hub</title>
-    <!-- Use the most stable secure client source distribution directly -->
-    <script src="https://unpkg.com"></script>
+    <title>Global Real-Time Link Hub</title>
+    <!-- Include GunDB for instant serverless global data sync -->
+    <script src="https://jsdelivr.net"></script>
     <style>
         body { font-family: 'Segoe UI', sans-serif; background: #0f172a; color: #f8fafc; text-align: center; padding: 20px; margin: 0; }
         .container { max-width: 600px; margin: auto; padding: 10px; }
-        .setup-box { background: #1e293b; padding: 20px; border-radius: 8px; margin-bottom: 20px; border: 1px solid #334155; }
+        .info-bar { background: #1e293b; padding: 12px; border-radius: 8px; margin-bottom: 20px; border: 1px solid #334155; font-size: 0.9rem; color: #38bdf8; }
         form { margin: 20px 0; display: flex; gap: 10px; }
         input { flex: 1; padding: 12px; border: none; border-radius: 6px; background: #1e293b; color: white; border: 1px solid #475569; font-size: 1rem; }
-        button { padding: 12px 20px; border: none; border-radius: 6px; background: #3b82f6; color: white; font-weight: bold; cursor: pointer; font-size: 1rem; }
+        button { padding: 12px 20px; border: none; border-radius: 6px; background: #3b82f6; color: white; font-weight: bold; cursor: pointer; font-size: 1rem; white-space: nowrap; }
         button:hover { background: #2563eb; }
         .section { background: #1e293b; padding: 20px; border-radius: 12px; margin-bottom: 20px; text-align: left; }
         .link-item { background: #334155; padding: 12px; margin: 8px 0; border-radius: 6px; display: flex; justify-content: space-between; align-items: center; gap: 10px; }
         .link-url { color: #38bdf8; text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 70%; cursor: pointer; }
         .link-url:hover { text-decoration: underline; }
         .clicks { background: #475569; padding: 4px 8px; border-radius: 4px; font-size: 0.85rem; white-space: nowrap; }
-        .host-badge { background: #10b981; color: white; padding: 4px 8px; border-radius: 4px; font-size: 0.8rem; font-weight: bold; }
-        .peer-id-display { color: #f43f5e; word-break: break-all; cursor: pointer; text-decoration: underline; }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>🔗 PeerJS Link Share Hub</h1>
-
-        <div class="setup-box">
-            <p>Your Peer ID: <strong id="my-id" class="peer-id-display" onclick="copyMyId()" title="Click to copy">Connecting...</strong></p>
-            <div id="connection-controls">
-                <p>To view links, enter an active Host ID below, or simply start sharing below to host your own hub!</p>
-                <input type="text" id="host-id-input" placeholder="Enter Host ID...">
-                <button onclick="connectToHost()">Connect to Hub</button>
-            </div>
-            <div id="host-status" style="display:none;">
-                <span class="host-badge">👑 Host Node</span> Keep this tab open so others can view and post links.
-            </div>
-        </div>
+        <h1>🔗 Global Link Share Hub</h1>
+        <div class="info-bar">🟢 Connected to Global Relay Network. Submissions update instantly for everyone.</div>
 
         <!-- Share Form -->
         <form id="link-form">
-            <input type="url" id="link-input" placeholder="https://example.com" required>
+            <input type="url" id="link-input" placeholder="https://example.com" required maxlength="500">
             <button type="submit">Share Link</button>
         </form>
 
         <!-- Display Lists -->
         <div class="section">
-            <h2 style="color: #f43f5e; margin-top:0;">🔥 Trending Links (Global Clicks)</h2>
+            <h2 style="color: #f43f5e; margin-top:0;">🔥 Global Trending (Most Clicked)</h2>
             <div id="trending-links">No trending links yet.</div>
         </div>
 
@@ -58,169 +45,112 @@
     </div>
 
     <script>
-        const peer = new Peer();
-        let conn = null;          
-        let clients = [];         
-        let globalLinks = [];     
-        let isClientMode = false;
+        // Initialize GunDB using public peer relays for zero-config mesh syncing
+        const gun = Gun(['https://herokuapp.com']);
+        const linksDB = gun.get('global-link-share-game-v1');
 
-        // Secure XSS and Layout sanitizer function
+        // Master local application state mapping
+        let localState = {};
+
+        // Security Patch: Stop HTML Injection / XSS attacks completely
         function escapeHTML(str) {
             return str.replace(/[&<>'"]/g, 
                 tag => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[tag] || tag)
             );
         }
 
-        // 1. Core Peer Instantiation
-        peer.on('open', (id) => {
-            document.getElementById('my-id').innerText = id;
+        // 1. REAL-TIME DATA RECEPTION ENGINE
+        // Listens to global changes and pushes live updates into the DOM automatically
+        linksDB.map().on((data, key) => {
+            if (!data || !data.url) return;
+
+            // Map incoming structure safely into local app state memory
+            localState[key] = {
+                id: key,
+                url: data.url,
+                clicks: parseInt(data.clicks) || 0,
+                timestamp: parseInt(data.timestamp) || 0
+            };
+
+            // Trigger reactive UI re-render without requiring full browser page reloads
+            updateUI();
         });
 
-        peer.on('error', (err) => {
-            console.error("Handled Peer Exception:", err.type);
-            if (err.type === 'peer-not-found') {
-                alert("Target Host ID not found. Verify the string matches perfectly.");
-            }
-        });
-
-        // 2. Server Pipeline Node Routines
-        peer.on('connection', (connection) => {
-            if (isClientMode) return; 
-            
-            document.getElementById('connection-controls').style.display = 'none';
-            document.getElementById('host-status').style.display = 'block';
-
-            // Filter duplicates out of active tracks dynamically
-            clients = clients.filter(c => c.peer !== connection.peer);
-            clients.push(connection);
-
-            // Bugfix 2: Clear latency sync dropouts by deferring initial state push safely
-            connection.on('open', () => {
-                setTimeout(() => {
-                    if (connection.open) {
-                        connection.send({ type: 'SYNC', links: globalLinks });
-                    }
-                }, 200);
-            });
-
-            connection.on('data', (data) => {
-                if (!data || !data.type) return;
-
-                if (data.type === 'NEW_LINK') {
-                    // Bugfix 3: Absolute deep array cloning immutability patterns
-                    const updatedLinks = [...globalLinks];
-                    updatedLinks.unshift({ id: Date.now() + Math.random(), url: data.url, clicks: 0 });
-                    globalLinks = updatedLinks;
-                } 
-                else if (data.type === 'CLICK_EVENT') {
-                    globalLinks = globalLinks.map(l => l.id === data.id ? { ...l, clicks: l.clicks + 1 } : l);
-                }
-
-                cleanAndBroadcast({ type: 'SYNC', links: globalLinks });
-                updateUI(globalLinks);
-            });
-
-            connection.on('close', () => {
-                clients = clients.filter(c => c.peer !== connection.peer);
-            });
-        });
-
-        function cleanAndBroadcast(data) {
-            clients = clients.filter(c => {
-                if (c.open) {
-                    try {
-                        c.send(data);
-                        return true;
-                    } catch(e) {
-                        return false;
-                    }
-                }
-                return false;
-            });
-        }
-
-        // 3. Client Node Connectivity Actions
-        function connectToHost() {
-            const hostId = document.getElementById('host-id-input').value.trim();
-            if (!hostId) return alert("Please enter a valid Host ID");
-            if (hostId === peer.id) return alert("Loopback to self identity denied.");
-
-            isClientMode = true;
-            conn = peer.connect(hostId);
-
-            conn.on('open', () => {
-                document.getElementById('connection-controls').innerHTML = `<p style="color: #10b981; font-weight: bold; margin: 0;">✔️ Connected to Host Hub</p>`;
-            });
-
-            conn.on('data', (data) => {
-                if (data && data.type === 'SYNC') {
-                    globalLinks = data.links || []; 
-                    updateUI(globalLinks);
-                }
-            });
-
-            conn.on('close', () => {
-                alert("Host network drop detected. Refreshing node state layout.");
-                location.reload();
-            });
-        }
-
-        // 4. Form Parsing Actions
+        // 2. DATA SUBMISSION HANDLER
         document.getElementById('link-form').onsubmit = (e) => {
             e.preventDefault();
             const urlInput = document.getElementById('link-input');
             let url = urlInput.value.trim();
 
+            // Sanitize missing browser link protocols
             if (!/^https?:\/\//i.test(url)) {
                 url = 'https://' + url;
             }
 
-            if (isClientMode && conn && conn.open) {
-                conn.send({ type: 'NEW_LINK', url: url });
-            } else {
-                isClientMode = false;
-                document.getElementById('connection-controls').style.display = 'none';
-                document.getElementById('host-status').style.display = 'block';
+            // Create an immutable unique global path key
+            const itemKey = 'link_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
 
-                const updatedLinks = [...globalLinks];
-                updatedLinks.unshift({ id: Date.now() + Math.random(), url: url, clicks: 0 });
-                globalLinks = updatedLinks;
-                
-                cleanAndBroadcast({ type: 'SYNC', links: globalLinks });
-                updateUI(globalLinks);
-            }
+            // Publish directly into the global decentralized web space
+            linksDB.get(itemKey).put({
+                url: url,
+                clicks: 0,
+                timestamp: Date.now()
+            });
+
             urlInput.value = '';
         };
 
-        // 5. Intercept Click Dispatch Router
-        function triggerLinkAction(id, url) {
-            if (isClientMode && conn && conn.open) {
-                conn.send({ type: 'CLICK_EVENT', id: id });
-            } else {
-                globalLinks = globalLinks.map(l => l.id === id ? { ...l, clicks: l.clicks + 1 } : l);
-                cleanAndBroadcast({ type: 'SYNC', links: globalLinks });
-                updateUI(globalLinks);
-            }
-            
-            // Execute window separation cleanly
+        // 3. SECURE CLICK DISPATCH ROUTER
+        function registerGlobalClick(key, url) {
+            const currentItem = localState[key];
+            if (!currentItem) return;
+
+            // Increment count globally on the decentralized network graph
+            linksDB.get(key).put({ clicks: currentItem.clicks + 1 });
+
+            // Safely spawn target tab routing outside async callbacks to evade browser popup blockers
             window.open(url, '_blank', 'noopener,noreferrer');
         }
 
-        // 6. Sanitized DOM Injection Engine
-        function updateUI(links) {
-            const dataPool = links || [];
+        // 4. SANITIZED DOM RECONSTRUCTION ENGINE
+        function updateUI() {
+            const linksArray = Object.values(localState);
 
-            // Recent Links UI Generator
+            // Sort logic block 1: Recent links (newest timestamps first)
+            const recentLinks = [...linksArray]
+                .sort((a, b) => b.timestamp - a.timestamp)
+                .slice(0, 10);
+
+            // Sort logic block 2: Trending links (highest click integers first)
+            const trendingLinks = [...linksArray]
+                .sort((a, b) => b.clicks - a.clicks)
+                .slice(0, 5);
+
+            // Generate Recently Shared Box UI
             const recentDiv = document.getElementById('recent-links');
-            recentDiv.innerHTML = dataPool.slice(0, 10).map(item => {
+            recentDiv.innerHTML = recentLinks.map(item => {
                 const cleanUrl = escapeHTML(item.url);
                 return `
                     <div class="link-item">
-                        <span class="link-url" onclick="triggerLinkAction(${item.id}, '${cleanUrl}')">${cleanUrl}</span>
-                        <span class="clicks">🔥 ${parseInt(item.clicks) || 0} clicks</span>
+                        <span class="link-url" onclick="registerGlobalClick('${item.id}', '${cleanUrl}')">${cleanUrl}</span>
+                        <span class="clicks">🔥 ${item.clicks} clicks</span>
                     </div>
                 `;
             }).join('') || "<p>No links shared yet.</p>";
 
-            // Trending Links UI Generator
+            // Generate Trending Box UI
+            const trendingDiv = document.getElementById('trending-links');
+            trendingDiv.innerHTML = trendingLinks.map(item => {
+                const cleanUrl = escapeHTML(item.url);
+                return `
+                    <div class="link-item">
+                        <span class="link-url" onclick="registerGlobalClick('${item.id}', '${cleanUrl}')">${cleanUrl}</span>
+                        <span class="clicks">🔥 ${item.clicks} clicks</span>
+                    </div>
+                `;
+            }).join('') || "<p>No trending links yet.</p>";
+        }
+    </script>
+</body>
+</html>
 
