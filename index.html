@@ -2,37 +2,185 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Link Share Game</title>
-    <script src="https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js"></script>
-    <script src="script.js"></script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PeerJS Link Share Hub</title>
+    <script src="https://unpkg.com"></script>
     <style>
-        body { font-family: sans-serif; text-align: center; background: #f4f4f9; }
-        #game-container { max-width: 600px; margin: auto; padding: 20px; }
-        .link-item { background: white; margin: 10px 0; padding: 15px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
-        .trending { color: #ff4500; font-weight: bold; }
+        body { font-family: 'Segoe UI', sans-serif; background: #0f172a; color: #f8fafc; text-align: center; padding: 20px; }
+        .container { max-width: 600px; margin: auto; }
+        .setup-box { background: #1e293b; padding: 15px; border-radius: 8px; margin-bottom: 20px; border: 1px solid #334155; }
+        form { margin: 20px 0; display: flex; gap: 10px; }
+        input { flex: 1; padding: 12px; border: none; border-radius: 6px; background: #1e293b; color: white; border: 1px solid #475569; }
+        button { padding: 12px 20px; border: none; border-radius: 6px; background: #3b82f6; color: white; font-weight: bold; cursor: pointer; }
+        button:hover { background: #2563eb; }
+        .section { background: #1e293b; padding: 20px; border-radius: 12px; margin-bottom: 20px; text-align: left; }
+        .link-item { background: #334155; padding: 12px; margin: 8px 0; border-radius: 6px; display: flex; justify-content: space-between; align-items: center; }
+        a { color: #38bdf8; text-decoration: none; }
+        .clicks { background: #475569; padding: 4px 8px; border-radius: 4px; font-size: 0.85rem; }
+        .host-badge { background: #10b981; color: white; padding: 2px 6px; border-radius: 4px; font-size: 0.8rem; }
     </style>
 </head>
 <body>
-    <div id="game-container">
-        <h1>🔗 Link Share Game</h1>
-        <p>Your Peer ID: <span id="my-id">...loading...</span></p>
-        
-        <form id="link-form">
-            <input type="text" id="link-input" placeholder="Paste a link here..." required>
-            <button type="submit">Send to Peers</button>
+    <div class="container">
+        <h1>🔗 PeerJS Link Share Hub</h1>
+
+        <!-- Setup Roles -->
+        <div class="setup-box">
+            <p>Your Peer ID: <strong id="my-id">Connecting...</strong></p>
+            <div id="connection-controls">
+                <p>To view links, enter the active Host ID below:</p>
+                <input type="text" id="host-id-input" placeholder="Enter Host ID...">
+                <button onclick="connectToHost()">Connect to Hub</button>
+            </div>
+            <div id="host-status" style="display:none;">
+                <span class="host-badge">👑 You are the Host</span> Keep this tab open so others can view and post links.
+            </div>
+        </div>
+
+        <!-- Share Form -->
+        <form id="link-form" style="display: none;">
+            <input type="url" id="link-input" placeholder="https://example.com" required>
+            <button type="submit">Share Link</button>
         </form>
 
-        <div id="lists">
-            <h3>Recent Shared Links</h3>
-            <div id="recent-links"></div>
-            
-            <h3 class="trending">🔥 Trending (Most Clicked)</h3>
-            <div id="trending-links"></div>
+        <!-- Display Lists -->
+        <div class="section">
+            <h2 style="color: #f43f5e;">🔥 Trending Links (Global Clicks)</h2>
+            <div id="trending-links">Connect to a host to see trending links.</div>
+        </div>
+
+        <div class="section">
+            <h2 style="color: #38bdf8;">⏱️ Recently Shared</h2>
+            <div id="recent-links">Connect to a host to see recent links.</div>
         </div>
     </div>
 
     <script>
-        // Core Logic will go here
+        let peer = new Peer();
+        let conn = null;          // For clients: connection to the host
+        let clients = [];         // For host: list of all connected client connections
+        let globalLinks = [];     // Array tracking { id, url, clicks }
+
+        // 1. Initialize Peer
+        peer.on('open', (id) => {
+            document.getElementById('my-id').innerText = id;
+            
+            // Optional: If you want to automatically become a host if no ID is entered
+            // You can share your ID with your friends.
+        });
+
+        // 2. HOST LOGIC: Listen for incoming client connections
+        peer.on('connection', (connection) => {
+            // Hide the join controls because we are acting as a host
+            document.getElementById('connection-controls').style.display = 'none';
+            document.getElementById('host-status').style.display = 'block';
+            document.getElementById('link-form').style.display = 'flex';
+
+            clients.push(connection);
+
+            // Immediately send current data to the newly connected user
+            connection.on('open', () => {
+                connection.send({ type: 'SYNC', links: globalLinks });
+            });
+
+            // Listen for data sent by clients (new links or link clicks)
+            connection.on('data', (data) => {
+                if (data.type === 'NEW_LINK') {
+                    const newLink = { id: Date.now(), url: data.url, clicks: 0 };
+                    globalLinks.unshift(newLink); // Add to start of list
+                } 
+                else if (data.type === 'CLICK') {
+                    const link = globalLinks.find(l => l.id === data.id);
+                    if (link) link.clicks++;
+                }
+
+                // Broadcast updated list to EVERYONE connected
+                broadcastToAll({ type: 'SYNC', links: globalLinks });
+                updateUI(globalLinks);
+            });
+        });
+
+        function broadcastToAll(data) {
+            clients.forEach(c => {
+                if (c.open) c.send(data);
+            });
+        }
+
+        // 3. CLIENT LOGIC: Connect to an existing host
+        function connectToHost() {
+            const hostId = document.getElementById('host-id-input').value.trim();
+            if (!hostId) return alert("Please enter a valid Host ID");
+
+            conn = peer.connect(hostId);
+
+            conn.on('open', () => {
+                document.getElementById('connection-controls').innerHTML = `<p style="color: #10b981;">✔️ Connected to Host: ${hostId}</p>`;
+                document.getElementById('link-form').style.display = 'flex';
+            });
+
+            // Listen for sync updates from the host
+            conn.on('data', (data) => {
+                if (data.type === 'SYNC') {
+                    updateUI(data.links);
+                }
+            });
+        }
+
+        // 4. SHARED FORM SUBMISSION
+        document.getElementById('link-form').onsubmit = (e) => {
+            e.preventDefault();
+            const url = document.getElementById('link-input').value;
+
+            if (conn) {
+                // Client submitting to Host
+                conn.send({ type: 'NEW_LINK', url: url });
+            } else {
+                // Host submitting locally to themselves
+                const newLink = { id: Date.now(), url: url, clicks: 0 };
+                globalLinks.unshift(newLink);
+                broadcastToAll({ type: 'SYNC', links: globalLinks });
+                updateUI(globalLinks);
+            }
+            document.getElementById('link-input').value = '';
+        };
+
+        // 5. CLICK TRACKING
+        function registerClick(id) {
+            if (conn) {
+                // Client reports click to host
+                conn.send({ type: 'CLICK', id: id });
+            } else {
+                // Host updates click locally
+                const link = globalLinks.find(l => l.id === id);
+                if (link) link.clicks++;
+                broadcastToAll({ type: 'SYNC', links: globalLinks });
+                updateUI(globalLinks);
+            }
+        }
+
+        // 6. RENDER DATA TO SCREEN
+        function updateUI(links) {
+            // Render Recent List (Max 10)
+            const recentDiv = document.getElementById('recent-links');
+            const recentHTML = links.slice(0, 10).map(item => `
+                <div class="link-item">
+                    <a href="${item.url}" target="_blank" onclick="registerClick(${item.id})">${item.url}</a>
+                    <span class="clicks">🔥 ${item.clicks} clicks</span>
+                </div>
+            `).join('');
+            recentDiv.innerHTML = recentHTML || "<p>No links shared yet.</p>";
+
+            // Render Trending List (Sorted by clicks, Max 5)
+            const trendingDiv = document.getElementById('trending-links');
+            const sortedLinks = [...links].sort((a, b) => b.clicks - a.clicks);
+            const trendingHTML = sortedLinks.slice(0, 5).map(item => `
+                <div class="link-item">
+                    <a href="${item.url}" target="_blank" onclick="registerClick(${item.id})">${item.url}</a>
+                    <span class="clicks">🔥 ${item.clicks} clicks</span>
+                </div>
+            `).join('');
+            trendingDiv.innerHTML = trendingHTML || "<p>No trending links yet.</p>";
+        }
     </script>
 </body>
 </html>
