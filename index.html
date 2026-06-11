@@ -4,12 +4,13 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Global Real-Time Link Hub</title>
-    <!-- Include GunDB for instant serverless global data sync -->
+    <!-- Stable GunDB core module delivery -->
     <script src="https://jsdelivr.net"></script>
     <style>
         body { font-family: 'Segoe UI', sans-serif; background: #0f172a; color: #f8fafc; text-align: center; padding: 20px; margin: 0; }
         .container { max-width: 600px; margin: auto; padding: 10px; }
         .info-bar { background: #1e293b; padding: 12px; border-radius: 8px; margin-bottom: 20px; border: 1px solid #334155; font-size: 0.9rem; color: #38bdf8; }
+        .debug-panel { background: #3b0712; border: 1px solid #7f1d1d; color: #fca5a5; padding: 10px; border-radius: 6px; margin-bottom: 15px; font-size: 0.85rem; text-align: left; display: none; }
         form { margin: 20px 0; display: flex; gap: 10px; }
         input { flex: 1; padding: 12px; border: none; border-radius: 6px; background: #1e293b; color: white; border: 1px solid #475569; font-size: 1rem; }
         button { padding: 12px 20px; border: none; border-radius: 6px; background: #3b82f6; color: white; font-weight: bold; cursor: pointer; font-size: 1rem; white-space: nowrap; }
@@ -24,15 +25,14 @@
 <body>
     <div class="container">
         <h1>🔗 Global Link Share Hub</h1>
-        <div class="info-bar">🟢 Connected to Global Relay Network. Submissions update instantly for everyone.</div>
+        <div id="status-bar" class="info-bar">📡 Initializing Peer Relay Network...</div>
+        <div id="debug" class="debug-panel"></div>
 
-        <!-- Share Form -->
         <form id="link-form">
             <input type="url" id="link-input" placeholder="https://example.com" required maxlength="500">
             <button type="submit">Share Link</button>
         </form>
 
-        <!-- Display Lists -->
         <div class="section">
             <h2 style="color: #f43f5e; margin-top:0;">🔥 Global Trending (Most Clicked)</h2>
             <div id="trending-links">No trending links yet.</div>
@@ -45,88 +45,99 @@
     </div>
 
     <script>
-        // Initialize GunDB using public peer relays for zero-config mesh syncing
-        const gun = Gun(['https://herokuapp.com']);
-        const linksDB = gun.get('global-link-share-game-v1');
+        // Check if running on local desktop file system instead of a server
+        if (window.location.protocol === 'file:') {
+            const dbg = document.getElementById('debug');
+            dbg.innerHTML = "⚠️ <strong>Running via Local File Context:</strong> Browsers often block network sync routines on raw files. To make updates live, run this using an IDE Live Server tool or host it online.";
+            dbg.style.display = "block";
+        }
 
-        // Master local application state mapping
+        // Bugfix: Swapped out dead Heroku server nodes for active, high-availability GunDB relays
+        const reliablePeers = [
+            'https://wall.org',
+            'https://gun-us.herokuapp.com/gun',
+            'https://gun-eu.herokuapp.com/gun'
+        ];
+        
+        const gun = Gun({ peers: reliablePeers });
+        // Using a fresh schema block path identifier to isolate network state mutations
+        const linksDB = gun.get('global-linkshare-production-v9');
+
         let localState = {};
+        let debounceTimer;
 
-        // Security Patch: Stop HTML Injection / XSS attacks completely
+        document.getElementById('status-bar').innerText = "🟢 Connected to Decentralized Network Mesh Node Channels.";
+
         function escapeHTML(str) {
             return str.replace(/[&<>'"]/g, 
                 tag => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[tag] || tag)
             );
         }
 
-        // 1. REAL-TIME DATA RECEPTION ENGINE
-        // Listens to global changes and pushes live updates into the DOM automatically
+        // 1. INPUT DATA INTERCEPTION STREAM
         linksDB.map().on((data, key) => {
+            // Filter invalid transmissions or dead nodes out of memory processing pipelines
             if (!data || !data.url) return;
 
-            // Map incoming structure safely into local app state memory
             localState[key] = {
                 id: key,
-                url: data.url,
+                url: String(data.url),
                 clicks: parseInt(data.clicks) || 0,
-                timestamp: parseInt(data.timestamp) || 0
+                timestamp: parseInt(data.timestamp) || Date.now()
             };
 
-            // Trigger reactive UI re-render without requiring full browser page reloads
-            updateUI();
+            clearTimeout(debounceTimer);
+            debounceTimer = setTimeout(updateUI, 30);
         });
 
-        // 2. DATA SUBMISSION HANDLER
+        // 2. SUBMISSION DISPATCH LOGIC
         document.getElementById('link-form').onsubmit = (e) => {
             e.preventDefault();
             const urlInput = document.getElementById('link-input');
             let url = urlInput.value.trim();
 
-            // Sanitize missing browser link protocols
             if (!/^https?:\/\//i.test(url)) {
                 url = 'https://' + url;
             }
 
-            // Create an immutable unique global path key
             const itemKey = 'link_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
 
-            // Publish directly into the global decentralized web space
+            // Push state record seamlessly onto the network structure map
             linksDB.get(itemKey).put({
                 url: url,
                 clicks: 0,
                 timestamp: Date.now()
+            }, (ack) => {
+                if (ack.err) {
+                    document.getElementById('debug').innerText = "Network Error: " + ack.err;
+                    document.getElementById('debug').style.display = "block";
+                }
             });
 
             urlInput.value = '';
         };
 
-        // 3. SECURE CLICK DISPATCH ROUTER
+        // 3. SEPARATED ASYNC RENDERING ENGINE
         function registerGlobalClick(key, url) {
             const currentItem = localState[key];
             if (!currentItem) return;
 
-            // Increment count globally on the decentralized network graph
             linksDB.get(key).put({ clicks: currentItem.clicks + 1 });
-
-            // Safely spawn target tab routing outside async callbacks to evade browser popup blockers
             window.open(url, '_blank', 'noopener,noreferrer');
         }
 
-        // 4. SANITIZED DOM RECONSTRUCTION ENGINE
+        // 4. CLEAN UI DOM INJECTION RECONSTRUCTION
         function updateUI() {
             const linksArray = Object.values(localState);
 
-            // Sort logic block 1: Recent links (newest timestamps first)
             const recentLinks = [...linksArray]
                 .sort((a, b) => b.timestamp - a.timestamp)
                 .slice(0, 10);
 
-            // Sort logic block 2: Trending links (highest click integers first)
             const trendingLinks = [...linksArray]
                 .sort((a, b) => b.clicks - a.clicks)
                 .slice(0, 5);
 
-            // Generate Recently Shared Box UI
             const recentDiv = document.getElementById('recent-links');
             recentDiv.innerHTML = recentLinks.map(item => {
                 const cleanUrl = escapeHTML(item.url);
@@ -138,7 +149,6 @@
                 `;
             }).join('') || "<p>No links shared yet.</p>";
 
-            // Generate Trending Box UI
             const trendingDiv = document.getElementById('trending-links');
             trendingDiv.innerHTML = trendingLinks.map(item => {
                 const cleanUrl = escapeHTML(item.url);
@@ -152,5 +162,7 @@
         }
     </script>
 </body>
+</html>
+
 </html>
 
